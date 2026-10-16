@@ -10,6 +10,7 @@ Everything else - the window, the palette, the animations - lives in mfp_py/.
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import os
 import sys
@@ -17,6 +18,32 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def enable_crash_log() -> None:
+    """Record native crashes and unhandled exceptions in the data folder.
+
+    A window that vanishes without a trace is impossible to debug otherwise: the
+    process died twice during testing with nothing in the log because Python never
+    got a chance to report anything.
+    """
+    try:
+        from mfp_py.config import data_dir
+
+        handle = open(data_dir() / "crash.log", "a", buffering=1, encoding="utf-8")
+        handle.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} start pid={os.getpid()} "
+                     f"argv={sys.argv[1:]} ---\n")
+        faulthandler.enable(handle, all_threads=True)
+
+        def hook(kind, value, tb):
+            import traceback
+
+            traceback.print_exception(kind, value, tb, file=handle)
+            sys.__excepthook__(kind, value, tb)
+
+        sys.excepthook = hook
+    except Exception:  # noqa: BLE001 - never let logging break startup
+        pass
 
 
 def early_beat(argv: list[str]) -> None:
@@ -48,5 +75,6 @@ def early_beat(argv: list[str]) -> None:
 from mfp_py.app import main  # noqa: E402
 
 if __name__ == "__main__":
+    enable_crash_log()
     early_beat(sys.argv[1:])
     raise SystemExit(main())

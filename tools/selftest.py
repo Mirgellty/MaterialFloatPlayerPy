@@ -146,7 +146,19 @@ def main() -> int:
         f"saved {saved}",
     )
 
-    player.shutdown()
+    if command_path is not None:
+        # the plugin asking us to quit (restart / feature off) must not look like
+        # the user closing the widget, or the plugin stops supervising us
+        command_path.unlink(missing_ok=True)
+        player._on_bridge_command("quit")
+        player.shutdown()
+        report.check(
+            "plugin-asked quit is not reported as a user exit",
+            not command_path.exists(),
+            "no quit written back",
+        )
+    else:
+        player.shutdown()
     print("FAILURES:", report.failures)
     return 1 if report.failures else 0
 

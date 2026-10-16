@@ -127,6 +127,7 @@ class FloatingPlayer(QObject):
         self.card.actionRequested.connect(self._on_action)
         self.started_at = time.time()
         self.lock = None
+        self._plugin_asked_quit = False
 
         self.palette_worker = PaletteWorker()
         self.palette_worker.ready.connect(self._on_palette)
@@ -206,6 +207,7 @@ class FloatingPlayer(QObject):
         elif action == "settings":
             self.open_settings()
         elif action in ("quit", "exit"):
+            self._plugin_asked_quit = True
             self.app.quit()
 
     # ------------------------------------------------------------- lifecycle
@@ -222,8 +224,11 @@ class FloatingPlayer(QObject):
         self.window.hide()
 
     def shutdown(self) -> None:
-        if isinstance(self.source, BridgeSource):
-            # say goodbye explicitly, otherwise the plugin would relaunch us
+        if isinstance(self.source, BridgeSource) and not self._plugin_asked_quit:
+            # Only report a *user* exit. The plugin reads "quit" as "the user
+            # closed it for good" and stops supervising; when the plugin itself
+            # asked us to go (restart, or the feature was switched off), saying
+            # goodbye would leave it refusing to bring us back.
             self.source.command("quit")
         self.source.stop()
         self.window.save_position()
