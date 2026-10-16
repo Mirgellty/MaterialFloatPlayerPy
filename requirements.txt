@@ -1,0 +1,17 @@
+# Runtime
+PySide6>=6.6            # the card, its animations and the settings dialog
+Pillow>=10.0            # album cover decoding + dominant colour extraction
+requests>=2.31          # optional online lyric lookup
+
+# Windows media session (SMTC). The winrt-* packages are the PyWinRT bindings for
+# the Windows.Media.Control API; Python 3.13 needs the 3.x line.
+winrt-runtime>=3.2
+winrt-Windows.Foundation>=3.2
+winrt-Windows.Media>=3.2
+winrt-Windows.Media.Control>=3.2
+winrt-Windows.Storage.Streams>=3.2
+
+# Dev tools only (tools/fake_player.py publishes a synthetic media session):
+#   winrt-Windows.Media.Core
+#   winrt-Windows.Media.Playback
+#   winrt-Windows.Storage
