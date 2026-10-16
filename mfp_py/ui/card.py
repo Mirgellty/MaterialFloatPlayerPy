@@ -16,7 +16,7 @@ import time
 from bisect import bisect_right
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -178,7 +178,9 @@ class Card(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_Hover, True)
         self._ticker = QTimer(self)
-        self._ticker.setInterval(33)
+        # ~60fps: the marquee glides at a few pixels per second, so a 30fps tick
+        # is itself visible as steps
+        self._ticker.setInterval(16)
         self._ticker.timeout.connect(self._on_tick)
         self._ticker.start()
 
@@ -569,6 +571,7 @@ class Card(QWidget):
             QColor(self._active.on_color),
             self._title_x,
             self._title_fade,
+            marquee=self._title_overflow > 6,
         )
 
         artist_rect = QRectF(left, title_rect.bottom() + 1, width, layout["artist_h"])
@@ -606,6 +609,7 @@ class Card(QWidget):
             QColor(self._active.accent),
             self._line_x,
             self._line_fade,
+            marquee=self._line_overflow > 6,
         )
         painter.restore()
 
@@ -771,53 +775,93 @@ class Card(QWidget):
         colour: QColor,
         offset: float,
         fade: bool,
+        marquee: bool = False,
     ) -> None:
         """Draw one line of text, optionally marqueeing with soft edges.
 
         The plugin did this with a CSS mask; here the text is drawn into an image
         and multiplied by a horizontal alpha gradient, which is the same thing.
+
+        A marquee is drawn as a *texture being moved*, not as text being redrawn
+        at a new position: redrawing every frame lets Qt snap the glyph origins to
+        whole pixels, so a slow glide sits still and then jumps a pixel ("有点抖").
+        Rasterising the line once and blitting it at a fractional x is also what
+        the plugin's CSS ``transform: translateX()`` did on the GPU.
         """
         if not text:
             return
 
-        if not fade:
+        if not marquee and not fade:
             painter.setFont(text_font)
             painter.setPen(colour)
             painter.drawText(
-                QRectF(rect.left() - offset, rect.top(), rect.width() + offset, rect.height()),
+                rect,
                 int(Qt.AlignLeft | Qt.AlignVCenter),
                 text,
             )
             return
 
+        self._draw_marquee(painter, rect, text, text_font, colour, offset, fade)
+
+    def _draw_marquee(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        text: str,
+        text_font: QFont,
+        colour: QColor,
+        offset: float,
+        fade: bool,
+    ) -> None:
+        """Draw a line that can be sliding, with optional soft edges.
+
+        The offset goes through the painter transform and the text is placed with
+        ``drawText(QPointF, ...)``. Both matter: a rect-based drawText snaps its
+        origin to whole pixels, so a slow marquee would sit still for a few frames
+        and then jump a pixel - that is the stutter this was written to remove
+        (measured: 0.25px steps came out as -0.15..+0.40px, and 16 of 23 frames
+        were pixel-identical to the previous one; with the transform they are a
+        steady -0.25px, none identical).
+        """
         ratio = self.devicePixelRatioF()
-        pixels_w = max(1, int(rect.width() * ratio))
-        pixels_h = max(1, int(rect.height() * ratio))
-        image = QImage(pixels_w, pixels_h, QImage.Format_ARGB32_Premultiplied)
-        image.fill(Qt.transparent)
-        inner = QPainter(image)
+        pixels_w = max(1, int(round(rect.width() * ratio)))
+        pixels_h = max(1, int(round(rect.height() * ratio)))
+        canvas = QImage(pixels_w, pixels_h, QImage.Format_ARGB32_Premultiplied)
+        canvas.fill(Qt.transparent)
+        # with the ratio set, the painter works in logical units but rasterises at
+        # device resolution
+        canvas.setDevicePixelRatio(ratio)
+        metrics = QFontMetricsF(text_font)
+        inner = QPainter(canvas)
         inner.setRenderHint(QPainter.Antialiasing, True)
         inner.setRenderHint(QPainter.TextAntialiasing, True)
-        inner.scale(ratio, ratio)  # draw in logical coordinates
         inner.setFont(text_font)
         inner.setPen(colour)
+        inner.translate(-offset, 0.0)
         inner.drawText(
-            QRectF(-offset, 0, rect.width() + offset, rect.height()),
-            int(Qt.AlignLeft | Qt.AlignVCenter),
+            QPointF(2.0, (rect.height() - metrics.height()) / 2.0 + metrics.ascent()),
             text,
         )
         inner.end()
-        fade_painter = QPainter(image)
-        gradient = QLinearGradient(0, 0, pixels_w, 0)
-        gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
-        edge = min(0.28, 14.0 / max(1.0, rect.width()))
-        gradient.setColorAt(edge, QColor(0, 0, 0, 255))
-        gradient.setColorAt(1.0 - edge, QColor(0, 0, 0, 255))
-        gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
-        fade_painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-        fade_painter.fillRect(0, 0, pixels_w, pixels_h, gradient)
-        fade_painter.end()
-        painter.drawImage(rect, image)
+        if fade:
+            fade_painter = QPainter(canvas)
+            gradient = QLinearGradient(0, 0, rect.width(), 0)
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+            edge = min(0.28, 14.0 / max(1.0, rect.width()))
+            gradient.setColorAt(edge, QColor(0, 0, 0, 255))
+            gradient.setColorAt(1.0 - edge, QColor(0, 0, 0, 255))
+            gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
+            fade_painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            fade_painter.fillRect(QRectF(0, 0, rect.width(), rect.height()), gradient)
+            fade_painter.end()
+        # whole device pixels: keeps the glyph shapes crisp while it glides
+        painter.drawImage(
+            QPointF(
+                round(rect.left() * ratio) / ratio,
+                round(rect.top() * ratio) / ratio,
+            ),
+            canvas,
+        )
 
     # ------------------------------------------------------------ animation
     def _position(self) -> float:

@@ -82,6 +82,9 @@ cd "C:\Users\16268\Documents\ChatGPT\floating window"
 - 背景不透明度、播放器宽度、圆角半径可调；**五处文字字号分别可调**（歌名 / 作者·专辑 /
   正在播放歌词 / 歌词（下一句）/ 翻译），字号总和超过卡片高度时整体等比缩小，不会被裁掉
 - 窗口带 `WS_EX_NOACTIVATE`：点它、悬停按钮都不会抢前台焦点，全屏游戏不会被顶掉
+- 滚动是真正的**亚像素**移动：偏移走画笔变换 + `drawText(QPointF)`，不是每帧把文字重画到
+  `QRectF`（那样 Qt 会把原点对齐到整像素，慢速滚动就会"停几帧再跳一格"，也就是那种抖动）。
+  `tools/probe_scroll.py` 会量这个：每步位移是否一致、有没有相邻帧完全一样
 - 日志写到 `%APPDATA%\MaterialFloatPlayerPy\player.log`
 
 ## 设置项
@@ -234,6 +237,7 @@ tools/
   fake_player.py       自建一个 SMTC 会话（假歌 + 生成封面 + 时间轴），离线联调用
   fake_plugin.py       扮演网易云插件写桥接文件、收命令，用来验证桥接这条路
   probe_bridge.py      打印插件写出的状态 / 歌词 / 配色，以及卡片内部状态（--app）
+  probe_scroll.py      量滚动是否平滑（每步亚像素位移是否一致、有没有卡帧）
   probe_smtc.py        打印当前系统媒体会话，或下发一条命令看反应
   probe_thumbnail.py   单测封面字节读取（IBuffer → bytes）与取色
   preview.py           渲染各种界面变体，输出 preview/sheet.png 对照图
